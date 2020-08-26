@@ -1,28 +1,35 @@
-% This file is for Gauss-Newton iteration, for resolvable control u ~ g Grad V
-% Uses spectral differentiation in parameters
-function test_hjb_allencahn2(V,t)
+% Test script for HJB and LQR controllers for 2D Allen-Cahn equation
+%   dx/dt = sigma*L*x + x*(1-x^2) + \chi_{\omega}*u
+% Input (model and approximation) parameters are read from the keyboard.
+% You may simply hit enter to choose the default parameters which
+% correspond to the experiment in the paper.
+% Output variables are stored in the main Matlab workspace. Some of the
+% interesting ones are:
+%   V: a cell array of TT cores of the value function approximation
+%   t: time points from the test ODE solve
+%   X: a trajectory from the HJB-controlled ODE
+%   ux: HJB control signal
+%   cost: a vector of running costs
+%   Xlqr, ulqr, cost_lqr: same for the full LQR-controlled ODE test
+%   Xunc, cost_unc: same for the uncontrolled ODE test (uunc=0)
 
-d = 7;
 
-nv = 5; % number of grid points in V
-av = 3; % size of V domain, [-av, av]^d
-
-tol = 1e-3;
-gamma = 0.1;
-
-mu = 100;
-umax = inf;
-
-% 2D Laplace
-% 23 - Three-stable, F(x) = sigma*L*x + X*(1-X^2)
-sigma = 0.2; % Diffusion coeff
+d = parse_parameter('Number of variables in one direction d (default 7): ', 7);
+sigma = parse_parameter('Diffusion coefficient sigma (default 0.2): ', 0.2);
+gamma = parse_parameter('Control regularization parameter gamma (default 1e-1): ', 1e-1);
+umax = parse_parameter('Control constraint umax (default inf): ', inf);
 
 % Characteristic function of controlled domain [omega_left, omega_right]
-omega_left = -0.5;
-omega_right = 0.2;
+omega_left = parse_parameter('Left boundary of the controlled domain omega_left (default -0.5): ', -0.5);
+omega_right = parse_parameter('Right boundary of the controlled domain omega_right (default 0.2): ', 0.2);
 
-% Time horizon for testing the controls
-T = 30;
+nv = parse_parameter('Number of Legendre polynomials for HJB nv (default 5): ',  5);
+av = parse_parameter('Size of the domain [-av,av] (default 3): ', 3);
+tol = parse_parameter('TT approximation and stopping tol (default 1e-3): ', 1e-3);
+mu = parse_parameter('Initial shift mu (default 100): ', 100);
+
+T = parse_parameter('Time horizon for testing the controls T (default 30): ', 30);
+
 
 
 % Space differentiation matrices
@@ -60,20 +67,22 @@ Ax_ric = Ax + 0.8*eye(d^2); % (approx) linearised model at origin
 
 
 % Prepare handles for ODE funs
-ffun = @(x,i)odefun(x,Ax,i); % Dynamics
+ffun = @(x,i)x*Ax(i,:).' + x(:,i).*(1-x(:,i).^2); % Dynamics
 gfun = @(x,i)gxi(i)*ones(size(x,1),1); % Actuator (here just const vector)
+
+% State cost function
+lfun = @(x)sum((x.^2).*(wxi'), 2);
 
 
 %%%%%%%%%%%%%%%%%%% Solve HJB
-if (nargin<1)
-    V = [];
-end
-V = hjb_leg(size(Ax,1), nv, av, ffun, gfun, @(x)lfun(x,wxi), gamma, tol, mu, V, umax);
+V = hjb_leg(size(Ax,1), nv, av, ffun, gfun, lfun, gamma, tol, mu, [], umax);
 
 
 % HJB control fun
 V = core2cell(V); % Disintegrate tt_tensor class to speed up many evals.
 controlfun = @(x)controlfun_leg(x,-av,av,V,gfun,gamma,umax);
+% ODE right-hand side function (full vector)
+odefun = @(x)x*Ax.' + x.*(1-x.^2);
 
 
 % Test the control by solving ODEs
@@ -81,9 +90,7 @@ controlfun = @(x)controlfun_leg(x,-av,av,V,gfun,gamma,umax);
 x0 = 2+cos(2*pi*xi1).*cos(pi*xi2); 
 
 % Set up integrator options
-if (nargin<2)
-    t = [0, T];
-end
+t = [0, T];
 opts = odeset('RelTol', 1e-6, 'AbsTol', 1e-20);
 
 % Create a handle for the control cost
@@ -94,50 +101,20 @@ else
 end
 
 % Solve HJB-controlled ODE
-[t,x] = ode15s(@(t,x)odefun(x', Ax).' + controlfun(x').', t, x0', opts);
-ux = controlfun(x); % Save the control separately
-cost = sum((x.^2).*(wxi'), 2) + ccostfun(ux);
+[t,X] = ode15s(@(t,x)odefun(x').' + controlfun(x').', t, x0', opts);
+ux = controlfun(X); % Save the control separately
+cost = sum((X.^2).*(wxi'), 2) + ccostfun(ux);
 % Compute the total cost using the trapezoidal rule
 fprintf('total HJB cost = %3.6f\n', sum((t(2:end)-t(1:end-1)).*0.5.*(cost(1:end-1)+cost(2:end))));
 
 % Solve uncontrolled ODE
-[tunc, xunc] = ode15s(@(t,x)odefun(x', Ax).', t, x0', opts);
-cost_unc = sum((xunc.^2).*(wxi'), 2);
+[tunc, Xunc] = ode15s(@(t,x)odefun(x').', t, x0', opts);
+cost_unc = sum((Xunc.^2).*(wxi'), 2);
 fprintf('total UNC cost = %3.6f\n', sum((tunc(2:end)-tunc(1:end-1)).*0.5.*(cost_unc(1:end-1)+cost_unc(2:end))));
 
 % Solve with LQR control
-[tlqr,xlqr] = ode15s(@(t,x)odefun(x', Ax).' - gxi*(K*x), t, x0', opts);
-ulqr = -xlqr*K';
-cost_lqr = sum((xlqr.^2).*(wxi'), 2) + gamma*ulqr.^2;
+[tlqr,Xlqr] = ode15s(@(t,x)odefun(x').' - gxi*(K*x), t, x0', opts);
+ulqr = -Xlqr*K';
+cost_lqr = sum((Xlqr.^2).*(wxi'), 2) + gamma*ulqr.^2;
 fprintf('total LQR cost = %3.6f\n', sum((tlqr(2:end)-tlqr(1:end-1)).*0.5.*(cost_lqr(1:end-1)+cost_lqr(2:end))));
 
-% Copy vars to main space
-vars = whos;
-for i=1:numel(vars)
-    if (exist(vars(i).name, 'var'))
-        assignin('base', vars(i).name, eval(vars(i).name));
-    end
-end
-end
-
-
-
-% Cost fun
-function [f]=lfun(x,wxi)
-f = sum((x.^2).*(wxi'), 2);
-end
-
-% Dyn system functions
-function [f] = odefun(x, Ax, i)
-if (nargin>2)
-    % Evaluate a single component f_i
-    f = x*Ax(i,:).';
-    x1 = x(:,i);
-else
-    % Evaluate the whole vector f
-    f = x*Ax.';
-    x1 = x;    
-end
-
-f = f + x1.*(1-x1.^2);
-end
