@@ -30,8 +30,9 @@ All tests ask the user to enter model and approximation parameters from the keyb
 * `lgwt.m` [Legendre-Gauss Quadrature Weights and Nodes](https://uk.mathworks.com/matlabcentral/fileexchange/4540-legendre-gauss-quadrature-weights-and-nodes)
 * `spectral_chebdiff.m` Computes the Chebyshev differentiation matrix
 
-### Fokker-Planck auxiliary
+### Auxiliary
 
+* `amen_cross_s.m` Enhanced TT-Cross algorithm for the TT approximation.
 * `fp1d.m` Generates system matrices and vectors for the discretized Fokker-Planck equation
 * `fpmr.m` Balanced Truncation of the Fokker-Planck model
 * `quadratic_fun.m` Computes a multivariate quadratic polynomial for the LQR initial guess for the value function
